@@ -200,10 +200,15 @@ _ROUTE_RE = re.compile(
     r"(?:\s+(?:on|for|at)\s+(?P<date>.+?))?\s*\??\s*$",
     re.IGNORECASE,
 )
-# Also accept "CITY to CITY" without "from" prefix.
+# Also accept "CITY to CITY [trailing date]" without "from" prefix.
+# `to` is permissive (letters / digits / spaces / hyphens / apostrophes /
+# periods) so trailing date phrases like "this Friday" or "tomorrow" land
+# inside the `to` capture, where `_split_trailing_date` peels them off
+# afterwards. The `from` group still requires Capitalized words so we
+# don't match random sentences that happen to contain "X to Y".
 _ROUTE_RE_BARE = re.compile(
     r"^(?:[A-Za-zÀ-ÿ\-'\s]*?\b)??(?P<from>[A-Z][A-Za-zÀ-ÿ\-']+(?:\s+[A-Z][A-Za-zÀ-ÿ\-']+)*)"
-    r"\s+to\s+(?P<to>[A-Z][A-Za-zÀ-ÿ\-']+(?:\s+[A-Z\d][A-Za-zÀ-ÿ\d\-'\.]+)*)"
+    r"\s+to\s+(?P<to>[A-Za-zÀ-ÿ\d\-'\.\s]+?)"
     r"(?:\s+(?:on|for|at)\s+(?P<date>.+?))?\s*\??\s*$"
 )
 
@@ -255,6 +260,26 @@ def _split_trailing_date(text: str, today: _date) -> tuple[str, str]:
     return text, ""
 
 
+# Date-anywhere extractor: catches "on May 20", "for tomorrow", "at 2026-05-25"
+# appearing BEFORE "from X to Y", which the route regex misses entirely.
+# Stops at "from"/"to"/sentence boundaries so it doesn't swallow the route.
+_DATE_ANYWHERE_RE = re.compile(
+    r"\b(?:on|at|for)\s+"
+    r"(?P<date>(?:next|this|coming|in)\s+\w+(?:\s+\w+)?|\d{4}-\d{2}-\d{2}"
+    r"|\d{1,2}\s+[A-Za-zÀ-ÿ]+(?:\s+\d{4})?|[A-Za-zÀ-ÿ]+\s+\d{1,2}(?:\s+\d{4})?"
+    r"|tomorrow|today|tonight)\b",
+    re.IGNORECASE,
+)
+
+# Noise words that signal we captured natural-language modifiers, not a
+# city — when these end up inside the to_city the parse is unreliable.
+_TO_NOISE_TOKENS = {
+    "which", "what", "where", "when", "why", "how",
+    "best", "cheapest", "fastest", "quickest", "shortest",
+    "please", "thanks", "thank",
+}
+
+
 def parse_query(text: str) -> Optional[dict]:
     """Extract (mode, from_city, to_city, date) from a free-text query.
 
@@ -264,7 +289,20 @@ def parse_query(text: str) -> Optional[dict]:
     s = text.strip()
     if not s:
         return None
+    today = _date.today()
 
+    # ---- pre-pass: extract "on DATE" / "for DATE" appearing anywhere ----
+    # (handles "in the morning on May 20 from Paris to Lyon" where the
+    # date precedes the route). We peel it out of `s` so the route regex
+    # sees a cleaner string.
+    pre_date_phrase = ""
+    pre_match = _DATE_ANYWHERE_RE.search(s)
+    if pre_match and parse_date(pre_match.group("date"), today=today) is not None:
+        pre_date_phrase = pre_match.group("date")
+        s = (s[:pre_match.start()] + " " + s[pre_match.end():]).strip()
+        s = re.sub(r"\s{2,}", " ", s)
+
+    # ---- main: match "from X to Y" route ----
     m = _ROUTE_RE.search(s)
     if not m:
         m = _ROUTE_RE_BARE.search(s)
@@ -273,23 +311,40 @@ def parse_query(text: str) -> Optional[dict]:
 
     from_city = m.group("from").strip()
     to_city = m.group("to").strip()
-    date_phrase = (m.group("date") or "").strip()
+    date_phrase = (m.group("date") or "").strip() or pre_date_phrase
 
-    # Clean: drop trailing punctuation, leading articles
+    # ---- post-clean from_city / to_city ----
     from_city = re.sub(r"^(?:the\s+)", "", from_city, flags=re.IGNORECASE)
     to_city = re.sub(r"^(?:the\s+)", "", to_city, flags=re.IGNORECASE)
 
-    today = _date.today()
+    # Truncate to_city at sentence-ending punctuation, then strip
+    # remaining trailing punctuation. Handles "Lyon. Which is the best",
+    # "Lyon?", "Lyon!", "Lyon, please".
+    to_city = re.split(r"[.?!,;]", to_city, maxsplit=1)[0].strip()
+    to_city = re.sub(r"[.?!,;:]+$", "", to_city).strip()
 
-    # If the regex didn't capture an explicit date (no "on/for/at"
-    # separator), try to peel a trailing date phrase off `to_city`.
-    # Handles "Paris to Lyon tomorrow", "Paris to Lyon next Monday",
-    # "Paris to Lyon 2026-05-25", etc.
+    if not to_city:
+        return None
+
+    # ---- date: try trailing-date peel BEFORE sanity-checking word count,
+    # so "Lille Europe next Tuesday" → to="Lille Europe" + date stays in.
     if not date_phrase:
         new_to, trailing = _split_trailing_date(to_city, today)
         if trailing:
             to_city = new_to
             date_phrase = trailing
+
+    # If to_city still contains obvious noise words, the parse is shaky —
+    # let the LLM handle the question.
+    to_lower = to_city.lower()
+    if any(re.search(rf"\b{w}\b", to_lower) for w in _TO_NOISE_TOKENS):
+        return None
+
+    # Sanity check: cities are rarely > 3 words. "Lille Europe", "La
+    # Rochelle", "Aix en Provence" all fit. Anything longer suggests we
+    # absorbed extra natural-language text.
+    if len(to_city.split()) > 3:
+        return None
 
     parsed_date = parse_date(date_phrase, today=today)
     if parsed_date is None:
@@ -298,7 +353,7 @@ def parse_query(text: str) -> Optional[dict]:
         return None  # past date → punt to LLM with rejection
 
     return {
-        "mode":  _detect_mode(s),
+        "mode":  _detect_mode(text),
         "from":  from_city,
         "to":    to_city,
         "date":  parsed_date,
