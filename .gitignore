@@ -24,8 +24,9 @@ venv/
 .DS_Store
 Thumbs.db
 
-# --- model files (too big for git) ---
-models/
+# --- model files (too big for git) — root-anchored so it doesn't match
+# accidental subfolders like MCP/flights-mcp/src/flights/models/ ---
+/models/
 
 # --- Claude Code local settings ---
 .claude/
