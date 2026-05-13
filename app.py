@@ -31,8 +31,24 @@ if sys.platform == "win32" and hasattr(sys.stdout, "buffer"):
 
 import streamlit as st
 
-# --- Load .env BEFORE we import anything LangChain or MCP-related, so the
-# MCP server subprocesses inherit our keys. -----------------------------
+# --- Streamlit Cloud secrets → os.environ bridge ----------------------
+# Locally we use `.env` (gitignored). On Streamlit Cloud there's no
+# `.env`; secrets live in `st.secrets` (configured via
+# Settings → Secrets in the app's dashboard, as a TOML blob). Mirror
+# them into os.environ BEFORE anything else imports — the MCP server
+# subprocesses inherit this environment and need the keys at spawn
+# time, not after they've started.
+try:
+    if hasattr(st, "secrets") and len(st.secrets):
+        for _k, _v in st.secrets.items():
+            if isinstance(_v, (str, int, float, bool)) and not os.environ.get(_k):
+                os.environ[_k] = str(_v)
+except Exception:
+    # `st.secrets` raises if no secrets.toml exists locally — that's
+    # fine, we'll fall back to .env via load_dotenv() below.
+    pass
+
+# --- Load .env (no-op on Cloud if no .env file present) ---------------
 from agent import load_dotenv
 load_dotenv()
 

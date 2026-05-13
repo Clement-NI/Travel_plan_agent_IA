@@ -1,3 +1,35 @@
+# Single requirements file for the entire project — Streamlit Cloud
+# (and other PaaS providers) install everything from here, so we
+# consolidate every dependency the agent + MCP servers need into one
+# flat list. On a local dev machine this same file is sufficient too;
+# the older split (requirements.txt + requirements-langchain.txt) was
+# legacy.
+
+# --- LangChain agent stack ---
+langchain-anthropic>=0.3.0
+langchain-core>=0.3.0
+langchain-google-genai>=2.0.0
+langchain-ollama>=0.2.0
+langchain-mcp-adapters>=0.2.0
+langgraph>=0.2.0
+langsmith>=0.8.0
 anthropic>=0.40.0
+
+# --- Web UI ---
+streamlit>=1.50.0
+
+# --- Vendor MCP runtime deps ---
+# flights-mcp / sncf-mcp / flixbus-mcp run as stdio subprocesses. On
+# cloud (no per-vendor .venv), they share the main Python interpreter
+# and need their deps installed here.
+mcp>=0.1.0
+fastmcp>=0.6.0
+httpx>=0.27.0
+pydantic>=2.0.0
+requests>=2.31.0
+python-dotenv>=1.0.0
+
+# --- Built-in tools ---
 ddgs>=6.0.0
+trafilatura>=1.12.0
 tzdata>=2024.1

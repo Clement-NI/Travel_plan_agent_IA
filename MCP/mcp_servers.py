@@ -88,18 +88,23 @@ def _enabled_servers() -> Dict[str, Dict[str, Any]]:
     flights_path = os.environ.get("FLIGHTS_MCP_PATH") or str(_DEFAULT_MCP_BASE / "flights-mcp")
     duffel_key = os.environ.get("DUFFEL_API_KEY_LIVE")
     if flights_path and duffel_key and Path(flights_path).is_dir():
+        # Prefer the vendor's own .venv (local dev path). On Streamlit
+        # Cloud / Docker / any PaaS, that .venv doesn't exist — we fall
+        # back to the main interpreter (`sys.executable`) and rely on
+        # the top-level requirements.txt to provide flights-mcp's deps
+        # (httpx, pydantic, mcp).
         venv_python = Path(flights_path) / ".venv" / "Scripts" / "python.exe"
         if not venv_python.is_file():
             venv_python = Path(flights_path) / ".venv" / "bin" / "python"
-        if venv_python.is_file():
-            servers["flights"] = {
-                "command": str(venv_python),
-                "args": ["-m", "flights.server"],
-                "cwd": flights_path,
-                "env": {**os.environ.copy(), "DUFFEL_API_KEY_LIVE": duffel_key,
-                        "PYTHONPATH": str(Path(flights_path) / "src")},
-                "transport": "stdio",
-            }
+        command = str(venv_python) if venv_python.is_file() else sys.executable
+        servers["flights"] = {
+            "command": command,
+            "args": ["-m", "flights.server"],
+            "cwd": flights_path,
+            "env": {**os.environ.copy(), "DUFFEL_API_KEY_LIVE": duffel_key,
+                    "PYTHONPATH": str(Path(flights_path) / "src")},
+            "transport": "stdio",
+        }
 
     # ---- SNCF MCP (our own minimal Navitia client) ----
     # Server lives at D:\MCP-servers\sncf-mcp\sncf_server.py (parallel to
@@ -133,17 +138,18 @@ def _enabled_servers() -> Dict[str, Dict[str, Any]]:
     flixbus_path = os.environ.get("FLIXBUS_MCP_PATH") or str(_DEFAULT_MCP_BASE / "flixbus-mcp")
     rapid_key = os.environ.get("RAPID_API_KEY")
     if flixbus_path and rapid_key and Path(flixbus_path).is_dir():
+        # Same vendor-venv-or-main-interpreter fallback as flights-mcp above.
         venv_python = Path(flixbus_path) / ".venv" / "Scripts" / "python.exe"
         if not venv_python.is_file():
             venv_python = Path(flixbus_path) / ".venv" / "bin" / "python"
-        if venv_python.is_file():
-            servers["flixbus"] = {
-                "command": str(venv_python),
-                "args": ["server.py"],
-                "cwd": flixbus_path,
-                "env": {**os.environ.copy(), "RAPID_API_KEY": rapid_key},
-                "transport": "stdio",
-            }
+        command = str(venv_python) if venv_python.is_file() else sys.executable
+        servers["flixbus"] = {
+            "command": command,
+            "args": ["server.py"],
+            "cwd": flixbus_path,
+            "env": {**os.environ.copy(), "RAPID_API_KEY": rapid_key},
+            "transport": "stdio",
+        }
 
     return servers
 
