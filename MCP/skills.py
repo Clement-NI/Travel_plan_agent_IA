@@ -497,21 +497,31 @@ def handle(text: str) -> Optional[str]:
 
     header = f"[skill: {mode}]  {from_city} → {to_city} on {date.isoformat()}\n"
 
+    # Each branch is defensively wrapped: if the MCP tool raises (e.g.
+    # Duffel returns HTTP 422, FlixBus times out, SNCF rejects a date),
+    # we display the error in-band rather than bubbling it to the
+    # caller, who would fall back to the slower LLM path.
+    def _safe(callable_, label: str) -> str:
+        try:
+            return callable_()
+        except Exception as exc:
+            return f"[skill error in {label}: {type(exc).__name__}: {str(exc)[:200]}]"
+
     if mode == "train":
-        body = f"### 🚆 Trains\n{run_train(from_city, to_city, date)}"
+        body = f"### 🚆 Trains\n{_safe(lambda: run_train(from_city, to_city, date), 'train')}"
     elif mode == "flight":
-        flight = run_flight(from_city, to_city, date)
-        # If flight failed (e.g. no IATA), punt to LLM
-        if flight.startswith("[skill:"):
+        flight = _safe(lambda: run_flight(from_city, to_city, date), "flight")
+        # If flight failed because of no IATA (controlled return), punt to LLM
+        if flight.startswith("[skill: no IATA"):
             return None
         body = f"### ✈ Flights\n{flight}"
     elif mode == "bus":
-        bus = run_bus(from_city, to_city, date)
-        if bus.startswith("[skill:"):
+        bus = _safe(lambda: run_bus(from_city, to_city, date), "bus")
+        if bus.startswith("[skill: FlixBus didn't"):
             return None
         body = f"### 🚌 Buses\n{bus}"
     elif mode == "plan":
-        body = run_plan(from_city, to_city, date)
+        body = run_plan(from_city, to_city, date)   # already wraps each mode
     else:
         return None  # unknown mode
 
