@@ -20,10 +20,38 @@ the caller falls back to the full LLM agent path.
 from __future__ import annotations
 
 import calendar
+import difflib
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date as _date, timedelta
 from typing import Optional
+
+
+# Common single-word date phrases that users might typo. We fuzzy-match
+# trailing words in the destination against this list with a tight
+# similarity threshold — catches "tomorrw", "tomorrrow", "tommorow",
+# "wednsday", etc., without hijacking legitimate city names that happen
+# to vaguely resemble these.
+_DATE_WORDS = (
+    "today", "tomorrow", "yesterday",
+    "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday",
+)
+
+
+def _correct_date_typo(word: str) -> Optional[str]:
+    """Return the closest match in `_DATE_WORDS` if `word` is a plausible
+    typo (similarity >= 0.78), else None.
+
+    The 0.78 threshold catches one-character drops/swaps ("tomorrw",
+    "tommorow", "wednsday") while staying conservative enough not to
+    misfire on station names like "Tomelloso" or city names like
+    "Toronto".
+    """
+    if not word or word.lower() in _DATE_WORDS:
+        return None
+    matches = difflib.get_close_matches(word.lower(), _DATE_WORDS, n=1, cutoff=0.78)
+    return matches[0] if matches else None
 
 
 # ---------- city → IATA mapping (mirror of system prompt) ----------
@@ -206,6 +234,24 @@ def _split_trailing_date(text: str, today: _date) -> tuple[str, str]:
             remaining = " ".join(parts[:-n]).strip()
             if remaining:
                 return remaining, candidate
+
+    # Typo recovery: trailing single word might be a misspelled date
+    # ("tomorrw" → "tomorrow", "wednsday" → "wednesday"). If we can
+    # confidently auto-correct it, peel + return the corrected form.
+    if len(parts) >= 2:
+        corrected = _correct_date_typo(parts[-1])
+        if corrected:
+            # "next mondy" / "this mondy" — also peel the modifier word
+            if len(parts) >= 3 and parts[-2].lower() in ("next", "this", "coming"):
+                combined = f"{parts[-2].lower()} {corrected}"
+                if parse_date(combined, today=today) is not None:
+                    remaining = " ".join(parts[:-2]).strip()
+                    return remaining, combined
+            # plain "tomorrw" / "wednsday" — peel just the typo
+            if parse_date(corrected, today=today) is not None:
+                remaining = " ".join(parts[:-1]).strip()
+                return remaining, corrected
+
     return text, ""
 
 
