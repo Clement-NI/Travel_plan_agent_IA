@@ -82,6 +82,9 @@ py ask.py "TGV from Paris to Bordeaux on 2026-05-25"
 # Multi-turn chat
 py chat.py
 
+# Web UI (browser at http://localhost:8501)
+py -m streamlit run app.py
+
 # Free / paid switch
 py ask.py --ollama "..."                    # Ollama Cloud, free
 py ask.py "..."                              # Claude Sonnet 4.5, paid
@@ -94,6 +97,15 @@ py chat.py --model claude-haiku-4-5
 That's it. Every run also uploads a trace to LangSmith (sign in to
 [smith.langchain.com](https://smith.langchain.com), open the `travel-agent`
 project).
+
+### Web UI
+
+`py -m streamlit run app.py` opens a browser chat interface at
+`http://localhost:8501`. The sidebar lets you switch provider
+(Anthropic / Ollama / Gemini) and model on the fly, with a button to
+reset the conversation. The same regex fast-path runs in the UI, so
+"plan a trip" queries finish in ~5-10s without the LLM. Stop the
+server with Ctrl-C in the terminal.
 
 ---
 
