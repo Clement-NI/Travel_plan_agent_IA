@@ -60,7 +60,8 @@ if not _use_ollama and not os.environ.get("ANTHROPIC_API_KEY"):
 import warnings
 warnings.filterwarnings("ignore")
 
-from langgraph.checkpoint.memory import InMemorySaver
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import AIMessage, HumanMessage
 
 from CLI.cli import build_agent, _extract_text, _fmt_args
@@ -80,7 +81,8 @@ else:
     from langchain_anthropic import ChatAnthropic
     _model_obj = ChatAnthropic(model=_model, temperature=0.0, max_tokens=4096)
 
-agent = build_agent(_model_obj, SYSTEM_PROMPT, TOOLS, checkpointer=InMemorySaver())
+_db_conn = sqlite3.connect("agent_state.db", check_same_thread=False)
+agent = build_agent(_model_obj, SYSTEM_PROMPT, TOOLS, checkpointer=SqliteSaver(_db_conn))
 config = {"configurable": {"thread_id": "chat"}}
 
 print(f"Agent ready ({_model}). Type 'exit' or Ctrl-D to quit.")

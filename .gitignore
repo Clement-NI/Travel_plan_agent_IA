@@ -16,6 +16,8 @@ venv/
 # --- agent / framework state ---
 .agent_history/
 .langgraph_api/
+agent_state.db
+agent_state.db-journal
 
 # --- editors ---
 .idea/

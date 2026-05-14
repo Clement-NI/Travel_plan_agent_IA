@@ -55,7 +55,8 @@ load_dotenv()
 import warnings
 warnings.filterwarnings("ignore")
 
-from langgraph.checkpoint.memory import InMemorySaver
+import sqlite3
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langchain_core.messages import AIMessage, HumanMessage
 
 from CLI.cli import build_agent, _extract_text, _fmt_args
@@ -85,8 +86,16 @@ def _build_cached_agent(provider: str, model: str):
     without `@st.cache_resource` the agent (and all its MCPs) would be
     rebuilt every single time.
 
-    Each cached agent gets its OWN InMemorySaver, but we use a per-
-    session thread_id so independent browser tabs don't bleed history.
+    Persistence: SqliteSaver writes to `agent_state.db` next to the
+    app. State survives Streamlit reruns AND process restarts (per
+    thread_id), so reopening a tab restores the conversation. On
+    Streamlit Cloud the DB lives on the container's ephemeral disk —
+    persists across reruns within a session, lost on redeploy. For
+    durable cross-deploy memory, point the connection at a managed
+    Postgres / Turso instead.
+
+    `check_same_thread=False` is required because Streamlit handles
+    user input on a different thread than the cached resource init.
     """
     if provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
@@ -102,7 +111,8 @@ def _build_cached_agent(provider: str, model: str):
         chat = ChatGoogleGenerativeAI(model=model, temperature=0.0)
     else:
         raise ValueError(f"unknown provider {provider!r}")
-    return build_agent(chat, SYSTEM_PROMPT, TOOLS, checkpointer=InMemorySaver())
+    conn = sqlite3.connect("agent_state.db", check_same_thread=False)
+    return build_agent(chat, SYSTEM_PROMPT, TOOLS, checkpointer=SqliteSaver(conn))
 
 
 # ---------- sidebar: provider + model + reset ----------
